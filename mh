@@ -146,17 +146,33 @@ run_build() {
 }
 
 run_codex() {
-  local pr=${1:-}
-  gh auth status -h github.com >/dev/null || fatal "`gh auth login` を実行してください"
-
-  if [[ -z $pr ]]; then
-    pr=$(gh pr list --state open --label codex --json number -q '.[0].number')
+  # Modes:
+  #   normal : fetch PR then build/test/merge
+  #   resume : assume we're already on the PR branch, build/test/merge only
+  local resume=0
+  if [[ "${1:-}" == "-r" || "${1:-}" == "--resume" ]]; then
+    resume=1
+    shift
   fi
-  [[ $pr ]] || fatal "Codex PR が見つかりません"
-  local title=$(gh pr view "$pr" --json title -q .title)
 
-  note "➡️ PR #$pr «$title» をチェックアウト"
-  gh pr checkout "$pr"
+  local pr
+  if (( resume == 0 )); then
+    # ----- normal mode -----
+    pr=${1:-}
+    if [[ -z $pr ]]; then
+      pr=$(gh pr list --state open --label codex --json number -q '.[0].number')
+    fi
+    [[ $pr ]] || fatal "Codex PR が見つかりません"
+
+    local title=$(gh pr view "$pr" --json title -q .title)
+    note "➡️ PR #$pr «$title» をチェックアウト"
+    gh pr checkout "$pr"
+  else
+    # ----- resume mode -----
+    note "🔄 resume モード: 現在ブランチで再ビルド"
+    pr=$(gh pr view --json number -q .number) \
+      || fatal 8 "このブランチに紐づく PR が見つかりません"
+  fi
 
   build_or_test
 
@@ -188,45 +204,11 @@ run_main() {
   note "🎉 完了: $main_branch を最新 $dev_branch で更新しました"
 }
 
-run_resume() {
-  # ワークフロー:
-  # 1) ローカル変更を build/test
-  # 2) origin へ push（差分があれば）
-  # 3) PR をマージ
-  # 4) ベースブランチに切替え fast‑forward pull
-  local branch=$(git rev-parse --abbrev-ref HEAD)
-  [[ $branch == codex/* || $branch == pr/* || $branch == feature/* ]] \
-    || fatal 5 "現在ブランチ ($branch) は Codex PR ではありません"
-
-  # ビルド / テスト
-  build_or_test
-
-  # push が必要か判定
-  if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
-    fatal 6 "コミットされていない変更があります"
-  fi
-  if ! git diff --quiet @{u}; then
-    note "⬆️ origin へ push"
-    git push -u origin "$branch" || fatal 7 "push に失敗しました"
-  fi
-
-  # PR 番号取得
-  local pr=$(gh pr view --json number -q .number) \
-    || fatal 8 "このブランチに紐づく PR が見つかりません"
-
-  # マージ
-  note "🟢 マージ PR #$pr"
-  merge_pr "$pr" || fatal 9 "PR マージに失敗しました"
-
-  # ベースブランチに戻り更新
-  update_base_branch "$pr"
-}
-
 run_update() {
   #   mh -u           → GitHub raw を ~/bin/mh へ
   #   mh -u -l        → ./mh を ~/bin/mh へコピー
   local use_local=0
-  if [[ "${1:-}" == "-l" ]]; then
+  if [[ "${1:-}" == "-l" || "${1:-}" == "--local" ]]; then
     use_local=1
   fi
 
@@ -253,11 +235,10 @@ cat <<'EOS'
 mh - Minimal helper
 
   -b, --build             現在ブランチを build / test だけ実行
-  -c, --codex [<PR#>]     Codex PR → build / test → merge → ベース更新
+  -c, --codex [-r|--resume] [<PR#>] Codex PR を build / test → merge → ベース更新
   -i, --install           gh (GitHub CLI) を Homebrew で導入
   -m, --main              main を develop で fast-forward し、push 後 develop に戻る
-  -r, --resume            現在 PR ブランチを build/test → push → merge → ベース更新
-  -u, --update [-l]       GitHub 版 (または -l で ./mh) を ~/bin/mh に反映
+  -u, --update [-l|--local] GitHub 版 (または -l / --local で ./mh) を ~/bin/mh に反映
   -h, --help              このヘルプ
 
 環境変数:
@@ -280,7 +261,6 @@ case "${1:-}" in
   -c|--codex)   shift; run_codex "$@" ;;  # C
   -i|--install) run_install ;;            # I
   -m|--main)    run_main ;;               # M
-  -r|--resume)  run_resume ;;             # R
   -u|--update)  shift; run_update "$@" ;; # U
   -h|--help|*)  run_help ;;               # help (last)
 esac
