@@ -151,6 +151,28 @@ sync_main() {
   note "🎉 完了: $main_branch を最新 $dev_branch で更新しました"
 }
 
+sync_mh() {
+  #   mh -u           → GitHub raw を ~/bin/mh へ
+  #   mh -u -l        → ./mh を ~/bin/mh へコピー
+  local use_local=0
+  if [[ "${1:-}" == "-l" ]]; then
+    use_local=1
+  fi
+
+  local BIN="$HOME/bin/mh"
+  local RAW_URL="https://raw.githubusercontent.com/muhiro12/mh/refs/heads/main/mh"
+
+  if (( use_local )); then
+    [[ -f ./mh ]] || fatal 3 "./mh が見つかりません"
+    cp ./mh "$BIN" || fatal 3 "コピー失敗"
+  else
+    curl -fsSL "$RAW_URL" -o "$BIN" || fatal 4 "mh のダウンロードに失敗"
+  fi
+
+  chmod 755 "$BIN"
+  note "✅ $BIN を更新しました"
+}
+
 show_help() {
 cat <<'EOS'
 mh - Minimal helper
@@ -160,6 +182,7 @@ mh - Minimal helper
   -b, --build             現在ブランチを build / test だけ実行
   -c, --codex [<PR#>]     Codex PR → build / test → merge → ベース更新
   -m, --main              main を develop で fast-forward し、push 後 develop に戻る
+  -u, --update [-l]       GitHub 版 (または -l で ./mh) を ~/bin/mh に反映
 
 環境変数:
   SCHEME=<scheme>         Scheme 自動判定を上書き
@@ -179,6 +202,7 @@ case "${1:-}" in
   -b|--build)   run_build ;;
   -c|--codex)   shift; run_codex "$@" ;;
   -m|--main)    sync_main ;;
+  -u|--update)  shift; sync_mh "$@" ;;
   -h|--help|*)  show_help ;;
 esac
 
