@@ -60,6 +60,12 @@ open_xcode() {
   fi
 }
 
+# Return 0 if the current scheme has test targets
+has_tests() {
+  xcodebuild ${TARGET[@]} -scheme "$SCHEME" -list 2>/dev/null \
+    | grep -A1 '^ *Test' | tail -n 1 | grep -q '[^[:space:]]'
+}
+
 build_or_test() {
   detect_xcode
   note "🏗 ${TARGET[*]} | 📛 $SCHEME | 📱 $DEST"
@@ -67,24 +73,28 @@ build_or_test() {
   # 一意な一時ログファイルを安全に生成
   local log=$(mktemp -t mh_build)
 
-  # ① test
-  if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" test >"$log" 2>&1; then
-    note "✅ テスト成功"
-    rm -f "$log"; return 0
+  if has_tests; then
+    # ① test
+    if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" test >"$log" 2>&1; then
+      note "✅ テスト成功"
+      rm -f "$log"; return 0
+    else
+      open_xcode
+      local msg="❌ テスト失敗\n$(tail -n 20 \"$log\")"
+      rm -f "$log"
+      fatal "$msg"
+    fi
   else
-    open_xcode
-  fi
-
-  # ② build のみ
-  note "ℹ️ テスト無/失敗 → build のみ再試行"
-  if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" build >"$log" 2>&1; then
-    note "✅ ビルド成功（テストなし）"
-    rm -f "$log"; return 0
-  else
-    open_xcode
-    local msg="❌ ビルド失敗\n$(tail -n 20 \"$log\")"
-    rm -f "$log"
-    fatal "$msg"
+    note "ℹ️ テストなし → build を実行"
+    if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" build >"$log" 2>&1; then
+      note "✅ ビルド成功（テストなし）"
+      rm -f "$log"; return 0
+    else
+      open_xcode
+      local msg="❌ ビルド失敗\n$(tail -n 20 \"$log\")"
+      rm -f "$log"
+      fatal "$msg"
+    fi
   fi
 }
 
