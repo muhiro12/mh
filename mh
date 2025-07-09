@@ -1,0 +1,150 @@
+#!/usr/bin/env zsh
+# ------------------------------------------------------------
+#  mh – Minimal Git / GitHub helper
+# ------------------------------------------------------------
+set -euo pipefail
+fatal(){ print -u2 "❌ $*"; exit 1 }
+note (){ print "🔹 $*" }
+
+# ---------- ❶ 関数 ------------------------------------------
+
+install_gh() {
+  if command -v gh >/dev/null; then
+    note "`gh` は既にインストール済み"
+  else
+    command -v brew >/dev/null || fatal "Homebrew が必要です: https://brew.sh"
+    note "⏬ gh をインストール中…"
+    brew install gh
+  fi
+  note "✅ gh 準備完了 (`gh --version | head -1`)"
+}
+
+detect_xcode() {
+  setopt localoptions null_glob
+  local workspace='' project=''
+  for w in *.xcworkspace; do workspace=$w; break; done
+  for p in *.xcodeproj;   do project=$p; break; done
+  [[ $workspace || $project ]] || fatal ".xcworkspace / .xcodeproj が見つかりません"
+
+  if [[ -z ${SCHEME:-} ]]; then
+    local -a list
+    [[ $workspace ]] && list=(-workspace "$workspace") || list=(-project "$project")
+    SCHEME=$(xcodebuild $list -list 2>/dev/null |
+             awk '/Schemes:/ {f=1;next} f&&NF{print;exit}' | xargs)
+  fi
+  [[ $SCHEME ]] || fatal "Scheme 自動特定失敗。SCHEME=… で指定可"
+
+  local sim_name
+  sim_name=$(xcrun simctl list devices available |
+             grep -Eo 'iPhone [^()]+' | head -n1 | xargs)
+  DEST="platform=iOS Simulator,OS=latest,name=${sim_name}"
+
+  typeset -ga TARGET=()
+  [[ $workspace ]] && TARGET+=(-workspace "$workspace")
+  [[ $project   ]] && TARGET+=(-project  "$project")
+}
+
+build_or_test() {
+  detect_xcode
+  note "🏗 ${TARGET[*]} | 📛 $SCHEME | 📱 $DEST"
+
+  # 一意な一時ログファイルを安全に生成
+  local log=$(mktemp -t mh_build)
+
+  # ① test
+  if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" test >"$log" 2>&1; then
+    note "✅ テスト成功"
+    rm -f "$log"; return 0
+  fi
+
+  # ② build のみ
+  note "ℹ️ テスト無/失敗 → build のみ再試行"
+  if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" build >"$log" 2>&1; then
+    note "✅ ビルド成功（テストなし）"
+    rm -f "$log"; return 0
+  fi
+
+  # ③ 失敗：末尾 20 行だけ表示してログ削除
+  fatal "❌ ビルド失敗\n$(tail -n 20 "$log")"
+  rm -f "$log"
+}
+
+run_build() {
+  note "🔍 現在ブランチ: $(git rev-parse --abbrev-ref HEAD)"
+  build_or_test
+}
+
+run_codex() {
+  local pr=${1:-}
+  gh auth status -h github.com >/dev/null || fatal "`gh auth login` を実行してください"
+
+  if [[ -z $pr ]]; then
+    pr=$(gh pr list --state open --label codex --json number -q '.[0].number')
+  fi
+  [[ $pr ]] || fatal "Codex PR が見つかりません"
+  local title=$(gh pr view "$pr" --json title -q .title)
+
+  note "➡️ PR #$pr «$title» をチェックアウト"
+  gh pr checkout "$pr"
+
+  build_or_test
+
+  note "🟢 マージ"
+  gh pr merge "$pr" --rebase --delete-branch --auto
+
+  local base=$(gh pr view "$pr" --json baseRefName -q .baseRefName)
+  git checkout "$base"
+  git pull --ff-only
+  note "🎉 完了: $base を最新に更新"
+}
+
+sync_main() {
+  local dev_branch=${DEV_BRANCH:-develop}
+  local main_branch=${MAIN_BRANCH:-main}
+
+  note "➡️ $main_branch へチェックアウト"
+  git checkout "$main_branch"
+
+  note "🔄 $dev_branch を fast-forward 取り込み"
+  git pull --ff-only origin "$dev_branch"
+
+  note "⬆️ Push $main_branch"
+  git push origin "$main_branch"
+
+  note "↩️ $dev_branch へ戻る"
+  git checkout "$dev_branch"
+  note "🎉 完了: $main_branch を最新 $dev_branch で更新しました"
+}
+
+show_help() {
+cat <<'EOS'
+mh - Minimal helper
+
+  -h, --help              このヘルプ
+  -i, --install           gh (GitHub CLI) を Homebrew で導入
+  -b, --build             現在ブランチを build / test だけ実行
+  -c, --codex [<PR#>]     Codex PR → build / test → merge → ベース更新
+  -m, --main              main を develop で fast-forward し、push 後 develop に戻る
+
+環境変数:
+  SCHEME=<scheme>         Scheme 自動判定を上書き
+  DEV_BRANCH=<name>       develop 以外を使う場合
+  MAIN_BRANCH=<name>      main 以外を使う場合
+EOS
+}
+
+# ---------- ❷ メイン -----------------------------------------
+
+ROOT=$(git -C . rev-parse --show-toplevel 2>/dev/null) ||
+  fatal "Git リポジトリ外です"
+cd "$ROOT"
+
+case "${1:-}" in
+  -i|--install) install_gh ;;
+  -b|--build)   run_build ;;
+  -c|--codex)   shift; run_codex "$@" ;;
+  -m|--main)    sync_main ;;
+  -h|--help|*)  show_help ;;
+esac
+
+exit 0
