@@ -3,7 +3,16 @@
 #  mh – Minimal Git / GitHub helper
 # ------------------------------------------------------------
 set -euo pipefail
-fatal(){ print -u2 "❌ $*"; exit 1 }
+fatal(){
+  local code=1
+  # If first arg is purely digits, treat it as exit code
+  if [[ "$1" =~ ^[0-9]+$ ]]; then
+    code=$1
+    shift
+  fi
+  print -u2 "❌ $*"
+  exit $code
+}
 note (){ print "🔹 $*" }
 
 # ---------- ❶ 関数 ------------------------------------------
@@ -21,9 +30,17 @@ install_gh() {
 
 detect_xcode() {
   setopt localoptions null_glob
+  local repo_name=${PWD:t}
   local workspace='' project=''
-  for w in *.xcworkspace; do workspace=$w; break; done
-  for p in *.xcodeproj;   do project=$p; break; done
+  # Prefer workspace/project whose basename matches repo root
+  for w in *.xcworkspace; do
+    [[ ${w:r} == "$repo_name" ]] && { workspace=$w; break; }
+    [[ -z $workspace ]] && workspace=$w
+  done
+  for p in *.xcodeproj; do
+    [[ ${p:r} == "$repo_name" ]] && { project=$p; break; }
+    [[ -z $project ]] && project=$p
+  done
   [[ $workspace || $project ]] || fatal ".xcworkspace / .xcodeproj が見つかりません"
 
   if [[ -z ${SCHEME:-} ]]; then
@@ -60,42 +77,31 @@ open_xcode() {
   fi
 }
 
-# Return 0 if the current scheme has test targets
-has_tests() {
-  xcodebuild ${TARGET[@]} -scheme "$SCHEME" -list 2>/dev/null \
-    | grep -A1 '^ *Test' | tail -n 1 | grep -q '[^[:space:]]'
-}
 
 build_or_test() {
   detect_xcode
   note "🏗 ${TARGET[*]} | 📛 $SCHEME | 📱 $DEST"
 
-  # 一意な一時ログファイルを安全に生成
   local log=$(mktemp -t mh_build)
 
-  if has_tests; then
-    # ① test
-    if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" test >"$log" 2>&1; then
-      note "✅ テスト成功"
-      rm -f "$log"; return 0
-    else
-      open_xcode
-      local msg="❌ テスト失敗\n$(tail -n 20 \"$log\")"
-      rm -f "$log"
-      fatal "$msg"
-    fi
-  else
-    note "ℹ️ テストなし → build を実行"
-    if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" build >"$log" 2>&1; then
+  # ① 常に test を試行
+  if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" test >"$log" 2>&1 ; then
+    note "✅ テスト成功"
+    rm -f "$log"; return 0
+  fi
+
+  # ② テストなし判定（エラーメッセージに 'No tests' が含まれる場合）
+  if grep -qiE 'no tests? were found|Testing failed.*No tests' "$log"; then
+    note "ℹ️ テストなし → build のみ実行"
+    if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" build >>"$log" 2>&1 ; then
       note "✅ ビルド成功（テストなし）"
       rm -f "$log"; return 0
-    else
-      open_xcode
-      local msg="❌ ビルド失敗\n$(tail -n 20 \"$log\")"
-      rm -f "$log"
-      fatal "$msg"
     fi
   fi
+
+  # ③ 失敗：Xcode を開き、exit code 2
+  open_xcode
+  fatal 2 "❌ ビルド/テスト失敗\n$(tail -n 20 \"$log\")"
 }
 
 run_build() {
