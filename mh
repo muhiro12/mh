@@ -44,6 +44,22 @@ detect_xcode() {
   [[ $project   ]] && TARGET+=(-project  "$project")
 }
 
+open_xcode() {
+  setopt localoptions null_glob
+  local workspace='' project=''
+  for w in *.xcworkspace; do workspace=$w; break; done
+  for p in *.xcodeproj;   do project=$p; break; done
+  if [[ $workspace ]]; then
+    note "📂 $workspace を Xcode で開きます"
+    open "$workspace"
+  elif [[ $project ]]; then
+    note "📂 $project を Xcode で開きます"
+    open "$project"
+  else
+    note "⚠️ Xcode プロジェクトが見つかりません"
+  fi
+}
+
 build_or_test() {
   detect_xcode
   note "🏗 ${TARGET[*]} | 📛 $SCHEME | 📱 $DEST"
@@ -55,6 +71,8 @@ build_or_test() {
   if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" test >"$log" 2>&1; then
     note "✅ テスト成功"
     rm -f "$log"; return 0
+  else
+    open_xcode
   fi
 
   # ② build のみ
@@ -62,11 +80,12 @@ build_or_test() {
   if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" build >"$log" 2>&1; then
     note "✅ ビルド成功（テストなし）"
     rm -f "$log"; return 0
+  else
+    open_xcode
+    local msg="❌ ビルド失敗\n$(tail -n 20 \"$log\")"
+    rm -f "$log"
+    fatal "$msg"
   fi
-
-  # ③ 失敗：末尾 20 行だけ表示してログ削除
-  fatal "❌ ビルド失敗\n$(tail -n 20 "$log")"
-  rm -f "$log"
 }
 
 run_build() {
