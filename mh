@@ -41,9 +41,15 @@ choose_target() {
 }
 
 merge_pr() {
-  # merge commit + delete branch
+  # Try auto-merge first; if repository disallows it, fall back to immediate merge‑commit
   local pr=$1
-  gh pr merge "$pr" --merge --delete-branch --auto
+  if gh pr merge "$pr" --merge --delete-branch --auto >/dev/null 2>&1; then
+    note "🟢 PR #$pr を Auto‑Merge に設定しました"
+  else
+    note "ℹ️ Auto‑Merge が無効のため通常マージを実行"
+    gh pr merge "$pr" --merge --delete-branch \
+      || fatal 9 "PR マージに失敗しました"
+  fi
 }
 
 install_gh_core() {
