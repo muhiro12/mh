@@ -2,7 +2,13 @@
 # ------------------------------------------------------------
 #  mh – Minimal Git / GitHub helper
 # ------------------------------------------------------------
+
 set -euo pipefail
+
+# ============================================================
+# ==  共通処理 / Common Helpers
+# ============================================================
+
 fatal(){
   local code=1
   # If first arg is purely digits, treat it as exit code
@@ -13,11 +19,34 @@ fatal(){
   print -u2 "❌ $*"
   exit $code
 }
-note (){ print "🔹 $*" }
 
-# ---------- ❶ 関数 ------------------------------------------
+note (){
+  print "🔹 $*"
+}
 
-install_gh() {
+choose_target() {
+  # Decide workspace / project once and export WORKSPACE / PROJECT vars
+  setopt localoptions null_glob
+  local repo_name=${PWD:t}
+  WORKSPACE=''; PROJECT=''
+
+  for w in *.xcworkspace; do
+    [[ ${w:r} == "$repo_name" ]] && { WORKSPACE=$w; break; }
+    [[ -z $WORKSPACE ]] && WORKSPACE=$w
+  done
+  for p in *.xcodeproj; do
+    [[ ${p:r} == "$repo_name" ]] && { PROJECT=$p; break; }
+    [[ -z $PROJECT ]] && PROJECT=$p
+  done
+}
+
+merge_pr() {
+  # merge commit + delete branch
+  local pr=$1
+  gh pr merge "$pr" --merge --delete-branch --auto
+}
+
+install_gh_core() {
   if command -v gh >/dev/null; then
     note "`gh` は既にインストール済み"
   else
@@ -28,19 +57,20 @@ install_gh() {
   note "✅ gh 準備完了 (`gh --version | head -1`)"
 }
 
+update_base_branch() {
+  # $1 = PR number
+  local pr=$1
+  local base=$(gh pr view "$pr" --json baseRefName -q .baseRefName)
+  git checkout "$base"
+  git pull --ff-only
+  note "🎉 完了: $base を最新に更新"
+}
+
+
 detect_xcode() {
-  setopt localoptions null_glob
-  local repo_name=${PWD:t}
-  local workspace='' project=''
-  # Prefer workspace/project whose basename matches repo root
-  for w in *.xcworkspace; do
-    [[ ${w:r} == "$repo_name" ]] && { workspace=$w; break; }
-    [[ -z $workspace ]] && workspace=$w
-  done
-  for p in *.xcodeproj; do
-    [[ ${p:r} == "$repo_name" ]] && { project=$p; break; }
-    [[ -z $project ]] && project=$p
-  done
+  choose_target
+  local workspace=$WORKSPACE
+  local project=$PROJECT
   [[ $workspace || $project ]] || fatal ".xcworkspace / .xcodeproj が見つかりません"
 
   if [[ -z ${SCHEME:-} ]]; then
@@ -62,21 +92,17 @@ detect_xcode() {
 }
 
 open_xcode() {
-  setopt localoptions null_glob
-  local workspace='' project=''
-  for w in *.xcworkspace; do workspace=$w; break; done
-  for p in *.xcodeproj;   do project=$p; break; done
-  if [[ $workspace ]]; then
-    note "📂 $workspace を Xcode で開きます"
-    open "$workspace"
-  elif [[ $project ]]; then
-    note "📂 $project を Xcode で開きます"
-    open "$project"
+  choose_target
+  if [[ $WORKSPACE ]]; then
+    note "📂 $WORKSPACE を Xcode で開きます"
+    open "$WORKSPACE"
+  elif [[ $PROJECT ]]; then
+    note "📂 $PROJECT を Xcode で開きます"
+    open "$PROJECT"
   else
     note "⚠️ Xcode プロジェクトが見つかりません"
   fi
 }
-
 
 build_or_test() {
   detect_xcode
@@ -104,6 +130,10 @@ build_or_test() {
   fatal 2 "❌ ビルド/テスト失敗\n$(tail -n 20 \"$log\")"
 }
 
+# ============================================================
+# ==  コマンド実装 / Command Implementations
+# ============================================================
+
 run_build() {
   note "🔍 現在ブランチ: $(git rev-parse --abbrev-ref HEAD)"
   build_or_test
@@ -125,15 +155,16 @@ run_codex() {
   build_or_test
 
   note "🟢 マージ"
-  gh pr merge "$pr" --merge --delete-branch --auto
+  merge_pr "$pr"
 
-  local base=$(gh pr view "$pr" --json baseRefName -q .baseRefName)
-  git checkout "$base"
-  git pull --ff-only
-  note "🎉 完了: $base を最新に更新"
+  update_base_branch "$pr"
 }
 
-sync_main() {
+run_install() {
+  install_gh_core
+}
+
+run_main() {
   local dev_branch=${DEV_BRANCH:-develop}
   local main_branch=${MAIN_BRANCH:-main}
 
@@ -149,28 +180,6 @@ sync_main() {
   note "↩️ $dev_branch へ戻る"
   git checkout "$dev_branch"
   note "🎉 完了: $main_branch を最新 $dev_branch で更新しました"
-}
-
-sync_mh() {
-  #   mh -u           → GitHub raw を ~/bin/mh へ
-  #   mh -u -l        → ./mh を ~/bin/mh へコピー
-  local use_local=0
-  if [[ "${1:-}" == "-l" ]]; then
-    use_local=1
-  fi
-
-  local BIN="$HOME/bin/mh"
-  local RAW_URL="https://raw.githubusercontent.com/muhiro12/mh/refs/heads/main/mh"
-
-  if (( use_local )); then
-    [[ -f ./mh ]] || fatal 3 "./mh が見つかりません"
-    cp ./mh "$BIN" || fatal 3 "コピー失敗"
-  else
-    curl -fsSL "$RAW_URL" -o "$BIN" || fatal 4 "mh のダウンロードに失敗"
-  fi
-
-  chmod 755 "$BIN"
-  note "✅ $BIN を更新しました"
 }
 
 run_resume() {
@@ -195,33 +204,55 @@ run_resume() {
     git push -u origin "$branch" || fatal 7 "push に失敗しました"
   fi
 
-  # PR 番号とベースブランチ取得
+  # PR 番号取得
   local pr=$(gh pr view --json number -q .number) \
     || fatal 8 "このブランチに紐づく PR が見つかりません"
-  local base=$(gh pr view "$pr" --json baseRefName -q .baseRefName)
 
   # マージ
   note "🟢 マージ PR #$pr"
-  gh pr merge "$pr" --merge --delete-branch --auto \
-    || fatal 9 "PR マージに失敗しました"
+  merge_pr "$pr" || fatal 9 "PR マージに失敗しました"
 
   # ベースブランチに戻り更新
-  git checkout "$base"
-  git pull --ff-only
-  note "🎉 完了: $base を最新に更新しました"
+  update_base_branch "$pr"
 }
 
-show_help() {
+run_update() {
+  #   mh -u           → GitHub raw を ~/bin/mh へ
+  #   mh -u -l        → ./mh を ~/bin/mh へコピー
+  local use_local=0
+  if [[ "${1:-}" == "-l" ]]; then
+    use_local=1
+  fi
+
+  local BIN="$HOME/bin/mh"
+  local RAW_URL="https://raw.githubusercontent.com/muhiro12/mh/refs/heads/main/mh"
+
+  if (( use_local )); then
+    [[ -f ./mh ]] || fatal 3 "./mh が見つかりません"
+    cp ./mh "$BIN" || fatal 3 "コピー失敗"
+  else
+    curl -fsSL "$RAW_URL" -o "$BIN" || fatal 4 "mh のダウンロードに失敗"
+  fi
+
+  chmod 755 "$BIN"
+  note "✅ $BIN を更新しました"
+}
+
+# ============================================================
+# ==  ヘルプ / Help
+# ============================================================
+
+run_help() {
 cat <<'EOS'
 mh - Minimal helper
 
-  -h, --help              このヘルプ
-  -i, --install           gh (GitHub CLI) を Homebrew で導入
   -b, --build             現在ブランチを build / test だけ実行
   -c, --codex [<PR#>]     Codex PR → build / test → merge → ベース更新
+  -i, --install           gh (GitHub CLI) を Homebrew で導入
   -m, --main              main を develop で fast-forward し、push 後 develop に戻る
-  -u, --update [-l]       GitHub 版 (または -l で ./mh) を ~/bin/mh に反映
   -r, --resume            現在 PR ブランチを build/test → push → merge → ベース更新
+  -u, --update [-l]       GitHub 版 (または -l で ./mh) を ~/bin/mh に反映
+  -h, --help              このヘルプ
 
 環境変数:
   SCHEME=<scheme>         Scheme 自動判定を上書き
@@ -230,20 +261,22 @@ mh - Minimal helper
 EOS
 }
 
-# ---------- ❷ メイン -----------------------------------------
+# ============================================================
+# ==  コマンド列挙 / Main Dispatch
+# ============================================================
 
 ROOT=$(git -C . rev-parse --show-toplevel 2>/dev/null) ||
   fatal "Git リポジトリ外です"
 cd "$ROOT"
 
 case "${1:-}" in
-  -i|--install) install_gh ;;
-  -b|--build)   run_build ;;
-  -c|--codex)   shift; run_codex "$@" ;;
-  -m|--main)    sync_main ;;
-  -u|--update)  shift; sync_mh "$@" ;;
-  -r|--resume)  run_resume ;;
-  -h|--help|*)  show_help ;;
+  -b|--build)   run_build ;;              # B
+  -c|--codex)   shift; run_codex "$@" ;;  # C
+  -i|--install) run_install ;;            # I
+  -m|--main)    run_main ;;               # M
+  -r|--resume)  run_resume ;;             # R
+  -u|--update)  shift; run_update "$@" ;; # U
+  -h|--help|*)  run_help ;;               # help (last)
 esac
 
 exit 0
