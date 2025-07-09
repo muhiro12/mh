@@ -125,7 +125,7 @@ run_codex() {
   build_or_test
 
   note "🟢 マージ"
-  gh pr merge "$pr" --rebase --delete-branch --auto
+  gh pr merge "$pr" --merge --delete-branch --auto
 
   local base=$(gh pr view "$pr" --json baseRefName -q .baseRefName)
   git checkout "$base"
@@ -173,6 +173,44 @@ sync_mh() {
   note "✅ $BIN を更新しました"
 }
 
+run_resume() {
+  # ワークフロー:
+  # 1) ローカル変更を build/test
+  # 2) origin へ push（差分があれば）
+  # 3) PR をマージ
+  # 4) ベースブランチに切替え fast‑forward pull
+  local branch=$(git rev-parse --abbrev-ref HEAD)
+  [[ $branch == codex/* || $branch == pr/* || $branch == feature/* ]] \
+    || fatal 5 "現在ブランチ ($branch) は Codex PR ではありません"
+
+  # ビルド / テスト
+  build_or_test
+
+  # push が必要か判定
+  if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
+    fatal 6 "コミットされていない変更があります"
+  fi
+  if ! git diff --quiet @{u}; then
+    note "⬆️ origin へ push"
+    git push -u origin "$branch" || fatal 7 "push に失敗しました"
+  fi
+
+  # PR 番号とベースブランチ取得
+  local pr=$(gh pr view --json number -q .number) \
+    || fatal 8 "このブランチに紐づく PR が見つかりません"
+  local base=$(gh pr view "$pr" --json baseRefName -q .baseRefName)
+
+  # マージ
+  note "🟢 マージ PR #$pr"
+  gh pr merge "$pr" --merge --delete-branch --auto \
+    || fatal 9 "PR マージに失敗しました"
+
+  # ベースブランチに戻り更新
+  git checkout "$base"
+  git pull --ff-only
+  note "🎉 完了: $base を最新に更新しました"
+}
+
 show_help() {
 cat <<'EOS'
 mh - Minimal helper
@@ -183,6 +221,7 @@ mh - Minimal helper
   -c, --codex [<PR#>]     Codex PR → build / test → merge → ベース更新
   -m, --main              main を develop で fast-forward し、push 後 develop に戻る
   -u, --update [-l]       GitHub 版 (または -l で ./mh) を ~/bin/mh に反映
+  -r, --resume            現在 PR ブランチを build/test → push → merge → ベース更新
 
 環境変数:
   SCHEME=<scheme>         Scheme 自動判定を上書き
@@ -203,6 +242,7 @@ case "${1:-}" in
   -c|--codex)   shift; run_codex "$@" ;;
   -m|--main)    sync_main ;;
   -u|--update)  shift; sync_mh "$@" ;;
+  -r|--resume)  run_resume ;;
   -h|--help|*)  show_help ;;
 esac
 
