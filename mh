@@ -80,8 +80,10 @@ update_base_branch() {
   local pr=$1
   local base=$(gh pr view "$pr" --json baseRefName -q .baseRefName)
   git checkout "$base"
-  git pull --ff-only
-  note "🎉 完了: $base を最新に更新"
+  # fast-forward で履歴を直線的に更新
+  git pull --ff-only origin "$base" \
+    || fatal 10 "ベースブランチの fast-forward に失敗しました"
+  note "🎉 完了: $base を最新に fast-forward 更新"
 }
 
 
@@ -230,7 +232,7 @@ run_main() {
   git checkout "$main_branch"
 
   note "🔄 $dev_branch を fast-forward 取り込み"
-  git pull --ff-only origin "$dev_branch"
+  git pull --no-ff origin "$dev_branch"
 
   note "⬆️ Push $main_branch"
   git push origin "$main_branch"
