@@ -111,6 +111,16 @@ detect_xcode() {
   [[ $project   ]] && TARGET+=(-project  "$project")
 }
 
+# 指定 Scheme にテストターゲットがあるか判定
+has_tests() {
+  setopt localoptions null_glob
+  local -a list
+  [[ $WORKSPACE ]] && list=(-workspace "$WORKSPACE") || list=(-project "$PROJECT")
+  xcodebuild "${list[@]}" -scheme "$SCHEME" -list 2>/dev/null \
+    | awk '/Test Targets:/ {f=1; next} f && NF {print; exit}' \
+    | grep -q .
+}
+
 open_xcode() {
   choose_target
   if [[ $WORKSPACE ]]; then
@@ -129,33 +139,31 @@ build_or_test() {
   note "🏗 ${TARGET[*]} | 📛 $SCHEME | 📱 $DEST"
 
   local log=$(mktemp -t mh_build)
-  local exit_code
 
-  # ① Always try test first
-  if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" test >"$log" 2>&1; then
-    note "✅ テスト成功"
-    rm -f "$log"
-    return 0
+  # ① Build step
+  if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" build >"$log" 2>&1; then
+    note "✅ ビルド成功"
   else
-    exit_code=$?
+    open_xcode
+    fatal 2 "❌ ビルド失敗\n$(tail -n 20 \"$log\")"
   fi
 
-  # ② If tests are absent, fallback to build
-  if grep -qiE 'no tests? were found|Testing failed.*No tests' "$log"; then
-    note "ℹ️ テスト無し検出 → build のみ実行"
-    if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" build >>"$log" 2>&1; then
-      note "✅ ビルド成功（テスト無し）"
+  # ② Test existence check
+  if has_tests; then
+    # ③ Test step
+    if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" test >"$log" 2>&1; then
+      note "✅ テスト成功"
       rm -f "$log"
       return 0
     else
       open_xcode
-      fatal 2 "❌ ビルド失敗 (テスト無し)\n$(tail -n 20 \"$log\")"
+      fatal 2 "❌ テスト失敗\n$(tail -n 20 \"$log\")"
     fi
+  else
+    note "ℹ️ テストターゲットなし → スキップ"
+    rm -f "$log"
+    return 0
   fi
-
-  # ③ Tests existed but failed
-  open_xcode
-  fatal 2 "❌ テスト失敗 (exit code $exit_code)\n$(tail -n 20 \"$log\")"
 }
 
 # ============================================================
