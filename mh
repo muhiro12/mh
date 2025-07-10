@@ -52,6 +52,18 @@ merge_pr() {
   fi
 }
 
+push_if_needed() {
+  # Push current branch to origin if local != remote
+  if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
+    fatal 6 "コミットされていない変更があります"
+  fi
+  if ! git diff --quiet @{u}; then
+    note "⬆️ origin へ push"
+    git push -u origin "$(git rev-parse --abbrev-ref HEAD)" \
+      || fatal 7 "push に失敗しました"
+  fi
+}
+
 install_gh_core() {
   if command -v gh >/dev/null; then
     note "`gh` は既にインストール済み"
@@ -175,6 +187,8 @@ run_codex() {
   fi
 
   build_or_test
+
+  push_if_needed
 
   note "🟢 マージ"
   merge_pr "$pr"
