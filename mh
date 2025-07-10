@@ -167,6 +167,20 @@ run_codex() {
     shift
   fi
 
+  # --- Prune remote-tracking branches ---
+  git fetch --prune origin
+
+  # --- Remove local branch whose name conflicts with PR head prefix ---
+  # Get the remote branch name (e.g., codex/foo)
+  local headRef=$(gh pr view "${1:-}" --json headRefName -q .headRefName 2>/dev/null)
+  if [[ -n $headRef && $headRef == */* ]]; then
+    local prefix=${headRef%%/*}
+    if git show-ref --verify --quiet "refs/heads/$prefix"; then
+      note "⚠️ ローカルブランチ '$prefix' を削除して名前衝突を回避"
+      git branch -D "$prefix"
+    fi
+  fi
+
   local pr
   if (( resume == 0 )); then
     # ----- normal mode -----
