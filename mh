@@ -50,6 +50,9 @@ merge_pr() {
     gh pr merge "$pr" --merge --delete-branch \
       || fatal 9 "PR マージに失敗しました"
   fi
+
+  # コマンド完了後にリモート追跡ブランチを prune
+  git fetch --prune origin
 }
 
 push_if_needed() {
@@ -184,9 +187,6 @@ run_codex() {
     resume=1
     shift
   fi
-
-  # --- Prune remote-tracking branches ---
-  git fetch --prune origin
 
   # --- Remove local branch whose name conflicts with PR head prefix ---
   # Get the remote branch name (e.g., codex/foo)
