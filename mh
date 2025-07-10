@@ -25,7 +25,7 @@ note (){
 }
 
 choose_target() {
-  # Decide workspace / project once and export WORKSPACE / PROJECT vars
+  # ワークスペース／プロジェクトを一度だけ検出し、WORKSPACE / PROJECT 変数にセット
   setopt localoptions null_glob
   local repo_name=${PWD:t}
   WORKSPACE=''; PROJECT=''
@@ -41,7 +41,7 @@ choose_target() {
 }
 
 merge_pr() {
-  # Try auto-merge first; if repository disallows it, fall back to immediate merge‑commit
+  # まず Auto-Merge を試行し、許可されていなければ即時マージコミットにフォールバック
   local pr=$1
   if gh pr merge "$pr" --merge --delete-branch --auto >/dev/null 2>&1; then
     note "🟢 PR #$pr を Auto‑Merge に設定しました"
@@ -53,7 +53,7 @@ merge_pr() {
 }
 
 push_if_needed() {
-  # Push current branch to origin if local != remote
+  # ローカルとリモートで差分があれば origin にプッシュ
   if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
     fatal 6 "コミットされていない変更があります"
   fi
@@ -76,7 +76,7 @@ install_gh_core() {
 }
 
 update_base_branch() {
-  # $1 = PR number
+  # $1 = PR 番号
   local pr=$1
   local base=$(gh pr view "$pr" --json baseRefName -q .baseRefName)
   git checkout "$base"
@@ -127,25 +127,33 @@ build_or_test() {
   note "🏗 ${TARGET[*]} | 📛 $SCHEME | 📱 $DEST"
 
   local log=$(mktemp -t mh_build)
+  local exit_code
 
-  # ① 常に test を試行
-  if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" test >"$log" 2>&1 ; then
+  # ① Always try test first
+  if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" test >"$log" 2>&1; then
     note "✅ テスト成功"
-    rm -f "$log"; return 0
+    rm -f "$log"
+    return 0
+  else
+    exit_code=$?
   fi
 
-  # ② テストなし判定（エラーメッセージに 'No tests' が含まれる場合）
+  # ② If tests are absent, fallback to build
   if grep -qiE 'no tests? were found|Testing failed.*No tests' "$log"; then
-    note "ℹ️ テストなし → build のみ実行"
-    if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" build >>"$log" 2>&1 ; then
-      note "✅ ビルド成功（テストなし）"
-      rm -f "$log"; return 0
+    note "ℹ️ テスト無し検出 → build のみ実行"
+    if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" build >>"$log" 2>&1; then
+      note "✅ ビルド成功（テスト無し）"
+      rm -f "$log"
+      return 0
+    else
+      open_xcode
+      fatal 2 "❌ ビルド失敗 (テスト無し)\n$(tail -n 20 \"$log\")"
     fi
   fi
 
-  # ③ 失敗：Xcode を開き、exit code 2
+  # ③ Tests existed but failed
   open_xcode
-  fatal 2 "❌ ビルド/テスト失敗\n$(tail -n 20 \"$log\")"
+  fatal 2 "❌ テスト失敗 (exit code $exit_code)\n$(tail -n 20 \"$log\")"
 }
 
 # ============================================================
@@ -158,9 +166,9 @@ run_build() {
 }
 
 run_codex() {
-  # Modes:
-  #   normal : fetch PR then build/test/merge
-  #   resume : assume we're already on the PR branch, build/test/merge only
+  # モード:
+  #   normal : PR を取得 → build/test → merge まで実行
+  #   resume : 既に PR ブランチ上で build/test → merge のみ実行
   local resume=0
   if [[ "${1:-}" == "-r" || "${1:-}" == "--resume" ]]; then
     resume=1
