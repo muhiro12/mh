@@ -164,7 +164,7 @@ build_or_test() {
       return 0
     else
       # 失敗原因がビルドかテストかを判定
-      if grep -q "BUILD FAILED" "$log"; then
+      if grep -qiE "BUILD FAILED|Build Failed|The following build commands failed" "$log"; then
         open_xcode
         fatal 2 "❌ ビルド失敗 (テスト実行前)\n$(tail -n 20 \"$log\")"
       else
