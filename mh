@@ -228,6 +228,10 @@ run_codex() {
   update_base_branch "$pr"
 }
 
+run_debug() {
+  run_help
+}
+
 run_install() {
   install_gh_core
 }
@@ -282,6 +286,7 @@ mh - Minimal helper
 
   -b, --build             現在ブランチを build / test だけ実行
   -c, --codex [-r|--resume] [<PR#>] Codex PR を build / test → merge → ベース更新
+  -d, --debug [<mode>]    デバッグ用コマンド（デフォルトはヘルプ表示）
   -i, --install           gh (GitHub CLI) を Homebrew で導入
   -m, --main              main を develop で fast-forward し、push 後 develop に戻る
   -u, --update [-l|--local] GitHub 版 (または -l / --local で ./mh) を ~/bin/mh に反映
@@ -305,6 +310,7 @@ cd "$ROOT"
 case "${1:-}" in
   -b|--build)   run_build ;;              # B
   -c|--codex)   shift; run_codex "$@" ;;  # C
+  -d|--debug)   run_debug ;;              # D
   -i|--install) run_install ;;            # I
   -m|--main)    run_main ;;               # M
   -u|--update)  shift; run_update "$@" ;; # U
