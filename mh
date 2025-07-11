@@ -156,29 +156,32 @@ build_or_test() {
 
   local log=$(mktemp -t mh_build)
 
-  # ① Build step
-  if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" build >"$log" 2>&1; then
-    note "✅ ビルド成功"
-  else
-    open_xcode
-    fatal 2 "❌ ビルド失敗\n$(tail -n 20 \"$log\")"
-  fi
-
-  # ② Test existence check
   if has_tests; then
-    # ③ Test step
+    note "🧪 テストターゲット検出 → test を実行"
     if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" test >"$log" 2>&1; then
       note "✅ テスト成功"
       rm -f "$log"
       return 0
     else
-      open_xcode
-      fatal 2 "❌ テスト失敗\n$(tail -n 20 \"$log\")"
+      # 失敗原因がビルドかテストかを判定
+      if grep -q "BUILD FAILED" "$log"; then
+        open_xcode
+        fatal 2 "❌ ビルド失敗 (テスト実行前)\n$(tail -n 20 \"$log\")"
+      else
+        open_xcode
+        fatal 2 "❌ テスト失敗\n$(tail -n 20 \"$log\")"
+      fi
     fi
   else
-    note "ℹ️ テストターゲットなし → スキップ"
-    rm -f "$log"
-    return 0
+    note "🛠 テストなし → build を実行"
+    if xcodebuild $TARGET -scheme "$SCHEME" -destination "$DEST" build >"$log" 2>&1; then
+      note "✅ ビルド成功"
+      rm -f "$log"
+      return 0
+    else
+      open_xcode
+      fatal 2 "❌ ビルド失敗\n$(tail -n 20 \"$log\")"
+    fi
   fi
 }
 
