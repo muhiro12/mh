@@ -119,9 +119,22 @@ has_tests() {
   setopt localoptions null_glob
   local -a list
   [[ $WORKSPACE ]] && list=(-workspace "$WORKSPACE") || list=(-project "$PROJECT")
-  xcodebuild "${list[@]}" -scheme "$SCHEME" -list 2>/dev/null \
-    | awk '/Test Targets:/ {f=1; next} f && NF {print; exit}' \
-    | grep -q .
+
+  # 1) Test Targets セクション優先
+  if xcodebuild "${list[@]}" -scheme "$SCHEME" -list 2>/dev/null \
+       | awk '/Test Targets:/ {f=1; next} f && NF {print; exit}' \
+       | grep -q . ; then
+    return 0
+  fi
+
+  # 2) Fallback: Targets 行に *Tests / *UITests が含まれるか
+  if xcodebuild "${list[@]}" -scheme "$SCHEME" -list 2>/dev/null \
+       | awk '/Targets:/ {f=1; next} /Build Configurations:/ {exit} f && /(Tests$|UITests$)/ {print; exit}' \
+       | grep -q . ; then
+    return 0
+  fi
+
+  return 1
 }
 
 open_xcode() {
