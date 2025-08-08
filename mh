@@ -256,18 +256,43 @@ run_main() {
   local dev_branch=${DEV_BRANCH:-develop}
   local main_branch=${MAIN_BRANCH:-main}
 
+  # 1) ensure develop is pushed to origin first
+  if git show-ref --verify --quiet "refs/heads/$dev_branch"; then
+    note "➡️ $dev_branch へチェックアウト"
+    git checkout "$dev_branch"
+
+    # detect upstream; push if missing or local is ahead
+    local upstream
+    upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
+    if [[ -z $upstream ]]; then
+      note "⬆️ upstream 未設定 → 初回 push (-u origin)"
+      git push -u origin "$dev_branch" || fatal 7 "push に失敗しました"
+    else
+      if ! git diff --quiet "$upstream".."$dev_branch"; then
+        note "⬆️ $dev_branch のローカル差分を origin へ push"
+        git push || fatal 7 "push に失敗しました"
+      else
+        note "ℹ️ $dev_branch は origin と同一（push 不要）"
+      fi
+    fi
+  else
+    note "ℹ️ ローカル $dev_branch が存在しないため push はスキップ"
+  fi
+
+  # 2) merge from origin/develop into main with a merge commit (no editor)
   note "➡️ $main_branch へチェックアウト"
   git checkout "$main_branch"
-
-  note "🔄 $dev_branch を fast-forward 取り込み"
+  note "🔄 origin/$dev_branch を main にマージ（--no-ff、--no-edit）"
+  git fetch origin "$dev_branch"
   git pull --no-ff --no-edit origin "$dev_branch"
 
+  # 3) push main and return to develop
   note "⬆️ Push $main_branch"
   git push origin "$main_branch"
 
   note "↩️ $dev_branch へ戻る"
   git checkout "$dev_branch"
-  note "🎉 完了: $main_branch を最新 $dev_branch で更新しました"
+  note "🎉 完了: $main_branch を最新 origin/$dev_branch で更新しました"
 }
 
 run_update() {
@@ -304,7 +329,7 @@ mh - Minimal helper
   -c, --codex [-r|--resume] [<PR#>] Codex PR を build / test → merge → ベース更新
   -d, --debug [<mode>]    デバッグ用コマンド（デフォルトはヘルプ表示）
   -i, --install           gh (GitHub CLI) を Homebrew で導入
-  -m, --main              main を develop で fast-forward し、push 後 develop に戻る
+  -m, --main              先に develop を origin に push → main に origin/develop をマージ（--no-ff、--no-edit）→ push 後 develop に戻る
   -u, --update [-l|--local] GitHub 版 (または -l / --local で ./mh) を ~/bin/mh に反映
   -h, --help              このヘルプ
 
