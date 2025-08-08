@@ -323,20 +323,25 @@ run_update() {
 
 run_help() {
 cat <<'EOS'
-mh - Minimal helper
+mh - Minimal Git/GitHub helper
 
-  -b, --build             現在ブランチを build / test だけ実行
-  -c, --codex [-r|--resume] [<PR#>] Codex PR を build / test → merge → ベース更新
-  -d, --debug [<mode>]    デバッグ用コマンド（デフォルトはヘルプ表示）
-  -i, --install           gh (GitHub CLI) を Homebrew で導入
-  -m, --main              先に develop を origin に push → main に origin/develop をマージ（--no-ff、--no-edit）→ push 後 develop に戻る
-  -u, --update [-l|--local] GitHub 版 (または -l / --local で ./mh) を ~/bin/mh に反映
-  -h, --help              このヘルプ
+Usage:
+  mh [options]
 
-環境変数:
-  SCHEME=<scheme>         Scheme 自動判定を上書き
-  DEV_BRANCH=<name>       develop 以外を使う場合
-  MAIN_BRANCH=<name>      main 以外を使う場合
+Commands:
+  -b, --build                   現在ブランチで build/test を実行
+  -c, --codex [-r|--resume] [<PR#>]
+                                Codex の PR を checkout → build/test → merge → base 更新
+  -d, --debug [<mode>]          デバッグ用（未指定ならヘルプ表示）
+  -i, --install                 GitHub CLI (gh) を Homebrew で導入
+  -m, --main                    origin/develop を main にマージ（--no-ff, --no-edit）して両方を更新
+  -u, --update [-l|--local]     GitHub 版（または -l で ./mh）を ~/bin/mh に反映
+  -h, --help                    このヘルプ
+
+Env:
+  SCHEME=<scheme>               Scheme 自動判定を上書き
+  DEV_BRANCH=<name>             develop 以外を使う場合
+  MAIN_BRANCH=<name>            main 以外を使う場合
 EOS
 }
 
