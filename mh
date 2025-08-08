@@ -260,7 +260,7 @@ run_main() {
   git checkout "$main_branch"
 
   note "🔄 $dev_branch を fast-forward 取り込み"
-  git pull --no-ff origin "$dev_branch"
+  git pull --no-ff --no-edit origin "$dev_branch"
 
   note "⬆️ Push $main_branch"
   git push origin "$main_branch"
